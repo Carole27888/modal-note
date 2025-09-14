@@ -12,6 +12,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Card,
+  CardContent,
+} from "@/components/ui/card";
 
 type User = {
   id: string;
@@ -48,6 +52,7 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [isOpen, setIsOpen] = useState(true);
+  const displayRef = useRef<HTMLDivElement>(null);
 
   function mentionTokenFor(user: User) {
     return `@${user.name}`;
@@ -81,6 +86,42 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
     const ranges = getMentionRanges(text, mentions);
     return ranges.find((r) => pos === r.end) || null;
   }
+
+  const renderNoteWithMentions = (text: string, mentions: User[]) => {
+    if (!text) return null;
+    
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    const sortedMentions = mentions.sort((a, b) => {
+      const aIndex = text.indexOf(mentionTokenFor(a));
+      const bIndex = text.indexOf(mentionTokenFor(b));
+      return aIndex - bIndex;
+    });
+
+    for (const user of sortedMentions) {
+      const token = mentionTokenFor(user);
+      const index = text.indexOf(token, lastIndex);
+      
+      if (index > lastIndex) {
+        parts.push(text.slice(lastIndex, index));
+      }
+      
+      if (index !== -1) {
+        parts.push(
+          <span key={user.id} className="text-blue-600 font-medium">
+            {token}
+          </span>
+        );
+        lastIndex = index + token.length;
+      }
+    }
+  
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
+    }
+    
+    return parts;
+  };
 
   useEffect(() => {
     const initialUsers = usersProp && usersProp.length > 0 ? usersProp : MOCK_USERS;
@@ -129,6 +170,12 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   const handleChangeNote = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setNote(value);
+
+    // Sync scroll with the display div
+    if (displayRef.current) {
+        displayRef.current.scrollTop = e.target.scrollTop;
+    }
+
     const selStart = e.target.selectionStart ?? value.length;
     const before = value.slice(0, selStart);
     const atMatch = before.match(/@([A-Za-z0-9_]*)$/);
@@ -153,28 +200,30 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
   };
 
   const insertMention = (user: User) => {
-    console.log(`${user.id} | ${user.name} was mentioned`);
     const el = textareaRef.current;
-    const cursorPos = el?.selectionStart ?? note.length;
+    if (!el) return;
+
+    const cursorPos = el.selectionStart ?? note.length;
     const before = note.slice(0, cursorPos);
     const after = note.slice(cursorPos);
+
     const beforeWithoutQuery = before.replace(/@([A-Za-z0-9_ ]*)$/, "");
-    const toInsert = `@${user.name} `;
+    const toInsert = `@${user.name} `; // ← keep the trailing space
     const updated = `${beforeWithoutQuery}${toInsert}${after}`;
-    setMentionedUsers((prev) => {
-      if (prev.some((u) => u.id === user.id)) return prev;
-      return [...prev, user];
-    });
+
+    setMentionedUsers((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
     setNote(updated);
     setShowDropdown(false);
     setMentionQuery("");
-    requestAnimationFrame(() => {
-      if (textareaRef.current) {
-        const pos = beforeWithoutQuery.length + toInsert.length;
-        textareaRef.current.focus();
-        textareaRef.current.selectionStart = textareaRef.current.selectionEnd = pos;
-      }
-    });
+
+    // place caret after the inserted space
+    setTimeout(() => {
+      const pos = beforeWithoutQuery.length + toInsert.length;
+      const t = textareaRef.current;
+      if (!t) return;
+      t.focus();
+      t.setSelectionRange(pos, pos);
+    }, 0);
   };
 
   const submitNote = () => {
@@ -303,6 +352,9 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
                 const target = e.target as HTMLTextAreaElement;
                 target.style.height = "auto";
                 target.style.height = Math.min(target.scrollHeight, 200) + "px";
+                if (displayRef.current) {
+                  displayRef.current.style.height = target.style.height;
+                }
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && e.shiftKey) return;
@@ -331,7 +383,20 @@ const AddNoteModal = ({ users: usersProp }: AddNoteModalProps) => {
                   el.selectionStart = el.selectionEnd = inside.end;
                 }
               }}
+              className="absolute top-0 left-0 w-full h-full p-2 text-transparent bg-transparent z-10 resize-none caret-black"
             />
+            <div
+                ref={displayRef}
+                className="w-full min-h-[48px] overflow-auto resize-none rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ height: "auto" }}
+                onScroll={(e) => {
+                  if (textareaRef.current) {
+                      textareaRef.current.scrollTop = e.currentTarget.scrollTop;
+                  }
+                }}
+            >
+                {renderNoteWithMentions(note, mentionedUsers)}
+            </div>
             {showDropdown && (
               <div
                 ref={dropdownRef}
